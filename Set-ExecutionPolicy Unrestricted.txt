@@ -1,0 +1,17 @@
+Set-ExecutionPolicy Unrestricted
+
+cd "C:\AULAML"
+
+python -m venv venv
+
+venv\scripts\activate
+
+pip install pandas
+
+pip install notebook
+
+pip freeze > requirements.txt
+
+pip install pandas seaborn
+
+pip install -r requirements.txt
