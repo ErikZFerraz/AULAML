@@ -1,0 +1,129 @@
+1. Instalar Dependências
+
+(Cole numa célula separada)
+
+# Instalação das dependências necessárias
+!pip install pdfplumber faiss-cpu sentence-transformers transformers torch
+
+2. Importações
+# Importação das bibliotecas necessárias
+import pdfplumber
+import json
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+3. Função para Ler PDF
+# Função para extrair texto de um PDF usando pdfplumber
+def ler_pdf(caminho_pdf):
+    texto = ""
+    with pdfplumber.open(caminho_pdf) as pdf:
+        for pagina in pdf.pages:
+            texto += pagina.extract_text() + "\n"
+    return texto
+
+print("Funções carregadas.")
+
+4. Dividir texto em chunks
+
+Chunk size ajustável para não estourar contexto do modelo.
+
+# Função para dividir o texto em pedaços (chunks)
+def criar_chunks(texto, tamanho=400, sobreposicao=50):
+    palavras = texto.split()
+    chunks = []
+    
+    i = 0
+    while i < len(palavras):
+        chunk = palavras[i:i + tamanho]
+        chunks.append(" ".join(chunk))
+        i += tamanho - sobreposicao
+    
+    return chunks
+
+print("Funções de chunk prontas.")
+
+5. Gerar Embeddings com modelo offline
+# Carrega modelo de embeddings local (não precisa internet)
+modelo_emb = SentenceTransformer("all-MiniLM-L6-v2")
+
+def gerar_embeddings(lista_textos):
+    return modelo_emb.encode(lista_textos)
+
+6. Criar e salvar o índice FAISS
+# Cria índice FAISS baseado em similaridade
+def criar_faiss(embeddings, caminho_index="faiss_index.bin"):
+    dim = embeddings.shape[1]  
+    index = faiss.IndexFlatL2(dim)
+    index.add(embeddings)
+    faiss.write_index(index, caminho_index)
+    print("Index salvo em:", caminho_index)
+    return index
+
+7. Pipeline completo: PDF → Chunks → Embeddings → FAISS
+# Caminho do PDF
+caminho_pdf = "meu_arquivo.pdf"   # <-- troque aqui
+
+texto = ler_pdf(caminho_pdf)
+chunks = criar_chunks(texto)
+
+# Salva chunks para uso offline
+with open("chunks.json", "w", encoding="utf-8") as f:
+    json.dump(chunks, f, ensure_ascii=False, indent=4)
+
+print(f"{len(chunks)} chunks criados e salvos.")
+
+# Gera embeddings
+embeddings = gerar_embeddings(chunks)
+embeddings = np.array(embeddings).astype("float32")
+
+# Cria FAISS
+index = criar_faiss(embeddings)
+
+8. Carregar tudo offline depois
+# Recarregar chunks e índice FAISS sem precisar refazer tudo
+def carregar_tudo():
+    chunks = json.load(open("chunks.json", "r", encoding="utf-8"))
+    index = faiss.read_index("faiss_index.bin")
+    return chunks, index
+
+chunks, index = carregar_tudo()
+print("Chunks e índice carregados!")
+
+9. Buscar contexto relevante no PDF via FAISS
+# Busca vetorial
+def buscar(query, k=3):
+    query_emb = modelo_emb.encode([query]).astype("float32")
+    dist, idx = index.search(query_emb, k)
+    resultados = [chunks[i] for i in idx[0]]
+    return resultados
+
+10. Carregar modelo LLM offline para responder (FLAN-T5)
+# Carrega modelo de linguagem 100% offline
+modelo = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
+tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
+
+def gerar_resposta(prompt):
+    entrada = tokenizer(prompt, return_tensors="pt")
+    saida = modelo.generate(**entrada, max_length=300)
+    return tokenizer.decode(saida[0], skip_special_tokens=True)
+
+11. Fazer perguntas sobre o PDF (RAG)
+# Interface final do sistema RAG offline
+def perguntar(pergunta):
+    contexto = "\n\n".join(buscar(pergunta))
+    prompt = f"""
+Você é um assistente. Use somente o contexto abaixo para responder:
+
+Contexto:
+{contexto}
+
+Pergunta: {pergunta}
+Resposta:
+"""
+    return gerar_resposta(prompt)
+
+# Teste
+pergunta = "Qual é o resumo do PDF?"
+print(perguntar(pergunta))
